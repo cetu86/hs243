@@ -19,12 +19,10 @@ data Richtung = Vor | Zurück deriving (Eq,Enum,Bounded)
 type Ar = (Achse,Richtung)
 
 neuesElement :: Brett -> IO Brett
-neuesElement b = do
-                    (z,s) <- wähle [(y,x) | x <- r, y <- r, b !! y !! x == 0]
-                    w' <- zufall1oder3
-                    return [if y == z then [if x == s then w' else w | (x,w) <- zip r row] 
+neuesElement b = besetze <$> zufall1oder3 <*> wähle [(y,x) | x <- r, y <- r, b !! y !! x == 0]
+    where besetze w' (z,s) = [if y == z then [if x == s then w' else w | (x,w) <- zip r row] 
                                else row | (y,row) <- zip r b ]
-    where randr n = getStdRandom (randomR  (0,n))
+          randr n = getStdRandom (randomR  (0,n))
           wähle :: [a] -> IO a
           wähle l =  (!!) l <$> randr (length l - 1)
           zufall1oder3 :: IO Int
@@ -33,9 +31,9 @@ neuesElement b = do
                     p x |   x < 0.9 = 0
                         | otherwise = 1
 
-schritt :: Brett -> Ar -> IO Brett
-schritt b ar = let b' = schiebe b ar
-                 in if b == b' then return b
+schritt :: Ar -> Brett -> IO Brett
+schritt ar b = let b' = schiebe ar b
+                in if b == b' then return b
                                else neuesElement b'
 
 sl :: [Int] -> [Int]
@@ -47,13 +45,13 @@ sl = padd . merge . filter (/= 0)
           padd xs | length xs < dim = xs ++ replicate (dim - length xs) 0
                   | otherwise = xs
 
-schiebe :: Brett -> Ar -> Brett
-schiebe b (Verti,r)     = transpose $ schiebe (transpose b) (Hori,r)
-schiebe b (Hori,Zurück) = map sl b
-schiebe b (Hori,Vor)    = map (reverse . sl . reverse) b
+schiebe :: Ar -> Brett -> Brett
+schiebe (Verti,r)     = transpose . schiebe (Hori,r) . transpose
+schiebe (Hori,Zurück) = map sl
+schiebe (Hori,Vor)    = map (reverse . sl . reverse)
 
 isOver :: Brett -> Bool
-isOver b = all ( (==b) . schiebe b ) alleRichtungen
+isOver b = all ( (==b) . flip schiebe b ) alleRichtungen
     where alleRichtungen :: [Ar]
           alleRichtungen = (,) <$> [minBound .. ] <*> [minBound .. ]
 
@@ -93,25 +91,19 @@ main = do
     hSetBuffering stdout NoBuffering
     hSetBuffering stdin NoBuffering
     hSetEcho stdout False
-    brett <- neuesElement leeresBrett >>= neuesElement
-    zeigeBrett brett
-    loop 0 brett
-    where loop zustand brett = do
-            c <- getChar
-            let (neuerZustand,vltRichtung) = verarbeiteEingabe zustand (ord c)
-            case vltRichtung of Nothing -> loop neuerZustand brett
-                                Just ar -> do
-                                            brett' <- schritt brett ar
-                                            zeigeBrett brett'
-                                            if isOver brett' 
-                                                then askRestart "GAME OVER!"
-                                                else if isWon brett' 
-                                                     then askRestart "you win :-)"
-                                                else loop neuerZustand brett'
-          askRestart msg = do putStr msg
-                              putStr " restart? (y/n)"
-                              getconfirmation
-            where getconfirmation = getChar >>= \c ->
-                                        case c of 'y' -> putStrLn "" >> main
-                                                  'n' -> putStrLn "" 
-                                                  otherwise -> getconfirmation
+    actualmain
+
+actualmain = neuesElement leeresBrett >>= neuesElement >>= zeigeBrett `s` loop 0 
+    where s f g = \x -> f x >> g x
+          loop z brett = getChar >>= flip reagiereaufEingabe brett . verarbeiteEingabe z . ord 
+          reagiereaufEingabe (z,Nothing) =  loop z 
+          reagiereaufEingabe (z,Just ar) =  schritt ar >=> zeigeBrett `s` behandleRandfälle z
+          behandleRandfälle z brett | isOver brett = askRestart "GAME OVER!"
+                                    |  isWon brett = askRestart "you win :-)"
+                                    |    otherwise = loop z brett
+          askRestart msg = putStr msg >> putStr " restart? (y/n)"
+                              >> getconfirmation
+            where getconfirmation = getChar >>= wasnun
+                    where wasnun 'y' = putStrLn "" >> actualmain
+                          wasnun 'n' = putStrLn "" 
+                          wasnun   _ = getconfirmation
