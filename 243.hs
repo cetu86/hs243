@@ -12,10 +12,11 @@ base = 3
 r = [0..dim-1]
 
 type Brett = [[Int]]
-leeresBrett = replicate dim $ replicate dim 0
+leeresBrett = (replicate dim . replicate dim) 0
 
-data Achse = Hori | Verti deriving (Eq,Show,Enum,Ord,Bounded)
-data Richtung = Vor | Zurück deriving (Eq,Show,Enum,Ord,Bounded)
+data Achse = Hori | Verti deriving (Eq,Enum,Bounded)
+data Richtung = Vor | Zurück deriving (Eq,Enum,Bounded)
+type Ar = (Achse,Richtung)
 
 neuesElement :: Brett -> IO Brett
 neuesElement b = do
@@ -23,16 +24,17 @@ neuesElement b = do
                     w' <- zufall1oder3
                     return [if y == z then [if x == s then w' else w | (x,w) <- zip r row] 
                                else row | (y,row) <- zip r b ]
-    where wähle :: [a] -> IO a
-          wähle l =  (!!) l <$> getStdRandom (randomR  (0,length l - 1))
+    where randr n = getStdRandom (randomR  (0,n))
+          wähle :: [a] -> IO a
+          wähle l =  (!!) l <$> randr (length l - 1)
           zufall1oder3 :: IO Int
-          zufall1oder3 = (base^) . p <$> getStdRandom (randomR  (0,1))
+          zufall1oder3 = (base^) . p <$> randr 1
               where p :: Float -> Int
                     p x |   x < 0.9 = 0
                         | otherwise = 1
 
-schritt :: Brett -> Achse -> Richtung -> IO Brett
-schritt b a r = let b' = schiebe b a r
+schritt :: Brett -> Ar -> IO Brett
+schritt b ar = let b' = schiebe b ar
                  in if b == b' then return b
                                else neuesElement b'
 
@@ -45,37 +47,40 @@ sl = padd . merge . filter (/= 0)
           padd xs | length xs < dim = xs ++ replicate (dim - length xs) 0
                   | otherwise = xs
 
-schiebe :: Brett -> Achse -> Richtung -> Brett
-schiebe b Verti r = transpose $ schiebe (transpose b) Hori r
-schiebe b Hori Zurück = map sl b
-schiebe b Hori Vor    = map (reverse . sl . reverse) b
+schiebe :: Brett -> Ar -> Brett
+schiebe b (Verti,r)     = transpose $ schiebe (transpose b) (Hori,r)
+schiebe b (Hori,Zurück) = map sl b
+schiebe b (Hori,Vor)    = map (reverse . sl . reverse) b
 
-colorStr :: Color -> String -> IO ()
-colorStr fg str = do
-  setSGR [SetColor Foreground Vivid fg, SetColor Background Dull Yellow]
-  putStr str
-  setSGR []
+isOver :: Brett -> Bool
+isOver b = all ( (==b) . schiebe b ) alleRichtungen
+    where alleRichtungen :: [Ar]
+          alleRichtungen = (,) <$> [minBound .. ] <*> [minBound .. ]
+
+isWon :: Brett -> Bool
+isWon = any (elem 243)
 
 zeigeBrett :: Brett -> IO ()
-zeigeBrett b = clearScreen >> sequence (intersperse linesep (map (sequence_ . intersperse colsep . map show') b)) >> 
-                putStrLn "" >> putStrLn ""
-    where linesep = putStrLn "" >> (colorStr Black $ replicate (dim*4-1) '-') >> putStrLn ""
+zeigeBrett b = clearScreen >> zb' b >> putStrLn "" >> putStrLn ""
+    where zb' = sequence_ . intersperse linesep . map 
+                (sequence_ . intersperse colsep . map show')
+          linesep = putStrLn "" >> colorStr Black (replicate (dim*4-1) '-') >> putStrLn ""
           colsep = colorStr Black "|"
           show' :: Int -> IO () 
           show' 0 = colorStr Black "   "
-          show' x = colorStr (fcode x) $ (fillup . show) x
+          show' x = colorStr (farbe x) $ (fillup . show) x
             where fillup x = let tofill = 3 - length x 
                               in if tofill > 0 then replicate tofill ' ' ++ x
                                                else x
-          fcode 1 = White
-          fcode 3 = Cyan
-          fcode 9 = Magenta
-          fcode 27 = Blue
-          fcode 81 = Yellow
-          fcode 243 = Green
-          fcode _ = Black
+          farbe x = let found = [c | (n,c) <- zip [0..] 
+                                    [White,Cyan,Magenta,Blue,Yellow,Green],3^n == x]
+                    in if null found then Black else head found
+          colorStr fg str = do
+              setSGR [SetColor Foreground Vivid fg, SetColor Background Dull Yellow]
+              putStr str
+              setSGR []
 
-verarbeiteEingabe :: Int -> Int -> (Int,Maybe (Achse,Richtung))
+verarbeiteEingabe :: Int -> Int -> (Int,Maybe Ar)
 verarbeiteEingabe 0 27 = (1,Nothing)
 verarbeiteEingabe 1 91 = (2,Nothing)
 verarbeiteEingabe 2 65 = (0,Just (Verti,Zurück))
@@ -95,11 +100,18 @@ main = do
             c <- getChar
             let (neuerZustand,vltRichtung) = verarbeiteEingabe zustand (ord c)
             case vltRichtung of Nothing -> loop neuerZustand brett
-                                Just (a,r) -> do
-                                            brett' <- schritt brett a r
+                                Just ar -> do
+                                            brett' <- schritt brett ar
                                             zeigeBrett brett'
-                                            if all (\(a,r) -> schiebe brett' a r == brett' ) ((,) <$> 
-                                                    [minBound :: Achse .. ] <*> [minBound :: Richtung .. ])
-                                                then putStrLn "GAME OVER!"
-                                                else if any (elem 243) brett' then putStrLn "you win :-)"
-                                                                              else loop neuerZustand brett'
+                                            if isOver brett' 
+                                                then askRestart "GAME OVER!"
+                                                else if isWon brett' 
+                                                     then askRestart "you win :-)"
+                                                else loop neuerZustand brett'
+          askRestart msg = do putStr msg
+                              putStr " restart? (y/n)"
+                              getconfirmation
+            where getconfirmation = getChar >>= \c ->
+                                        case c of 'y' -> putStrLn "" >> main
+                                                  'n' -> putStrLn "" 
+                                                  otherwise -> getconfirmation
