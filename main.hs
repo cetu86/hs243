@@ -3,7 +3,7 @@ import System.IO
 import Data.Char (ord)
 import Control.Monad
 import Control.Applicative
-import Data.Maybe
+import Data.Either
 import Data.List (intersperse,intercalate,transpose)
 import System.Random (getStdRandom,randomR)
 import System.Console.ANSI
@@ -27,6 +27,7 @@ p x |   x < 0.9 = 0
 
 winAt = base^winat
 r = [0..dim-1]
+rr = (,) <$> r <*> r
 
 type Brett = [[Int]]
 leeresBrett = (replicate dim . replicate dim) 0
@@ -36,14 +37,15 @@ data Richtung = Vor | Zurück deriving (Eq,Enum,Bounded)
 type Ar = (Achse,Richtung)
 
 neuesElement :: Brett -> IO Brett
-neuesElement b = besetze <$> zufall1oder3 <*> wähle [(y,x) | x <- r, y <- r, b !! y !! x == 0]
+neuesElement b = besetze <$> zufallszahl <*> wähle 
+                        (filter ( (== 0) . ((!!) . (!!) b <$> fst <*> snd) ) rr)
     where besetze w' (z,s) = [if y == z then [if x == s then w' else w | (x,w) <- zip r row] 
                                else row | (y,row) <- zip r b ]
           randr n = getStdRandom (randomR  (0,n))
           wähle :: [a] -> IO a
           wähle l =  (!!) l <$> randr (length l - 1)
-          zufall1oder3 :: IO Int
-          zufall1oder3 = (base^) . p <$> randr 1
+          zufallszahl :: IO Int
+          zufallszahl = (base^) . p <$> randr 1
 
 schritt :: Ar -> Brett -> IO Brett
 schritt ar b = let b' = schiebe ar b
@@ -51,13 +53,14 @@ schritt ar b = let b' = schiebe ar b
                                else neuesElement b'
 
 sl :: [Int] -> [Int]
-sl = padd . merge . filter (/= 0) 
-    where merge (x:xs) | length xs >=  bm1 && all (==x) (take bm1 xs) = x*base : merge (drop bm1 xs)
-                       | otherwise = x : merge xs
-          merge [] = []
-          padd xs | length xs < dim = xs ++ replicate (dim - length xs) 0
-                  | otherwise = xs
-          bm1 = base - 1
+sl = reverse . padd . foldl merge (0,0,0,[])
+    where merge (p,n,l,acc) 0 = (p,n,l,acc)
+          merge (p,n,l,acc) p' | p==p' && n == (base-1) 
+                                    = (0,0,l+1-n,p*base : drop n acc)
+                               | p==p' = (p,n+1,l+1,p:acc)
+                               | otherwise = (p',1,l+1,p':acc)
+          padd (_,_,l,acc) | l == dim = acc
+                           | otherwise = padd (0,0,l+1,0:acc)
 
 schiebe :: Ar -> Brett -> Brett
 schiebe (Verti,r)     = transpose . schiebe (Hori,r) . transpose
@@ -93,14 +96,16 @@ zeigeBrett b = clearScreen >> zb' b >> putStrLn "" >> putStrLn ""
               putStr str
               setSGR []
 
-verarbeiteEingabe :: Int -> Int -> (Int,Maybe Ar)
-verarbeiteEingabe 0 27 = (1,Nothing)
-verarbeiteEingabe 1 91 = (2,Nothing)
-verarbeiteEingabe 2 65 = (0,Just (Verti,Zurück))
-verarbeiteEingabe 2 66 = (0,Just (Verti,Vor))
-verarbeiteEingabe 2 67 = (0,Just (Hori,Vor))
-verarbeiteEingabe 2 68 = (0,Just (Hori,Zurück))
-verarbeiteEingabe _  _ = (0,Nothing)
+data Flussbefehl = Weiter | Ende
+verarbeiteEingabe :: Int -> Int -> (Int,Either Flussbefehl Ar)
+verarbeiteEingabe 0 27 = (1,Left Weiter)
+verarbeiteEingabe 1 91 = (2,Left Weiter)
+verarbeiteEingabe 2 65 = (0,Right (Verti,Zurück))
+verarbeiteEingabe 2 66 = (0,Right (Verti,Vor))
+verarbeiteEingabe 2 67 = (0,Right (Hori,Vor))
+verarbeiteEingabe 2 68 = (0,Right (Hori,Zurück))
+verarbeiteEingabe _  n | n == ord 'q' = (0,Left Ende)
+                       |    otherwise = (0,Left Weiter)
 
 main = do 
     hSetBuffering stdout NoBuffering
@@ -111,8 +116,9 @@ main = do
 actualmain = neuesElement leeresBrett >>= neuesElement >>= zeigeBrett `s` loop 0 
     where s f g x = f x >> g x
           loop z brett = getChar >>= flip reagiereaufEingabe brett . verarbeiteEingabe z . ord 
-          reagiereaufEingabe (z,Nothing) =  loop z 
-          reagiereaufEingabe (z,Just ar) =  schritt ar >=> zeigeBrett `s` behandleRandfälle z
+          reagiereaufEingabe (z,Left Weiter) =  loop z 
+          reagiereaufEingabe (z,Left Ende) = const $ return ()
+          reagiereaufEingabe (z,Right ar) =  schritt ar >=> zeigeBrett `s` behandleRandfälle z
           behandleRandfälle z brett | isOver brett = askRestart "GAME OVER!"
                                     |  isWon brett = askRestart "you win :-)"
                                     |    otherwise = loop z brett
