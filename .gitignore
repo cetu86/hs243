@@ -1,4 +1,3 @@
-*.hi
-*.o
-2048*
-243*
+dist
+*.swp
+Setup.hs
