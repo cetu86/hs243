@@ -6,15 +6,31 @@ import System.Console.ANSI
 import Control.Monad
 import Data.Either
 import Data.Char
-import Data.List (intersperse)
+import Data.List (intersperse,intercalate)
+
+surroundWith :: a -> [a] -> [a]
+surroundWith with list = (with : list) ++ [with]
 
 
 zeigeBrett :: Params -> Brett -> IO ()
-zeigeBrett Params {..} b = clearScreen >> zb' b >> putStrLn "" >> putStrLn ""
+zeigeBrett Params {..} b = clearScreen >> header >> zb' b >> footer
     where zb' = sequence_ . intersperse linesep . map 
-                (sequence_ . intersperse colsep . map show')
-          linesep = putStrLn "" >> colorStr Black (replicate (dimension*(alignat+1)-1) '-') >> putStrLn ""
-          colsep = colorStr Black "|"
+                (sequence_ . surroundWith colsep .intersperse colsep . map show')
+          header = do 
+            hDivider "┌" "┬" "┐"
+            putStrLn ""
+          linesep = do 
+            putStrLn ""
+            hDivider "├" "┼" "┤"
+            putStrLn ""
+          footer = do 
+            putStrLn ""
+            hDivider "└" "┴" "┘"
+            putStrLn ""
+            putStrLn ""
+          hDivider a b c = colorStr Black $ a ++ intercalate b hCellDividers  ++ c
+          hCellDividers = replicate dimension $ replicate alignat '─'
+          colsep = colorStr Black "│"
           show' :: Int -> IO () 
           show' 0 = colorStr Black (replicate alignat ' ')
           show' x = colorStr (farbe x) $ (fillup . show) x
